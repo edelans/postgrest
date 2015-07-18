@@ -51,7 +51,7 @@ app conf reqBody req =
       return $ responseLBS status200 [jsonH] $ cs body
 
     ([table], "OPTIONS") -> do
-      let t = QualifiedTable schema (cs table)
+      let t = QualifiedIdentifier schema (cs table)
       cols <- columns t
       pkey <- map cs <$> primaryKeyColumns t
       return $ responseLBS status200 [jsonH, allOrigins]
@@ -61,16 +61,16 @@ app conf reqBody req =
       if range == Just emptyRange
       then return $ responseLBS status416 [] "HTTP Range error"
       else do
-        let qt = QualifiedTable schema (cs table)
+        let qi = QualifiedIdentifier schema (cs table)
         let select = B.Stmt "select " V.empty True <>
                   parentheticT (
-                    whereT qq $ countRows qt
+                    whereT qq $ countRows qi
                   ) <> commaq <> (
                   asJsonWithCount
                   . limitT range
                   . orderT (orderParse qq)
                   . whereT qq
-                  $ selectStar qt
+                  $ selectStar qi
                 )
         row <- H.maybeEx select
         let (tableTotal, queryTotal, body) =
@@ -128,7 +128,7 @@ app conf reqBody req =
                   encode . object $ [("message", String "Failed authentication.")]
 
     ([table], "POST") -> do
-      let qt = QualifiedTable schema (cs table)
+      let qi = QualifiedIdentifier schema (cs table)
           echoRequested = lookup "Prefer" hdrs == Just "return=representation"
           parsed :: Either String (V.Vector Text, V.Vector (V.Vector Value))
           parsed = if lookup "Content-Type" hdrs == Just "text/csv"
@@ -145,9 +145,9 @@ app conf reqBody req =
         Left err -> return $ responseLBS status400 [] $
           encode . object $ [("message", String $ "Failed to parse JSON payload. " <> cs err)]
         Right toBeInserted -> do
-          rows :: [Identity Text] <- H.listEx $ uncurry (insertInto qt) toBeInserted
+          rows :: [Identity Text] <- H.listEx $ uncurry (insertInto qi) toBeInserted
           let inserted :: [Object] = mapMaybe (decode . cs . runIdentity) rows
-          primaryKeys <- primaryKeyColumns qt
+          primaryKeys <- primaryKeyColumns qi
           let responses = flip map inserted $ \obj -> do
                 let primaries =
                       if Prelude.null primaryKeys
@@ -164,21 +164,21 @@ app conf reqBody req =
 
     ([table], "PUT") ->
       handleJsonObj reqBody $ \obj -> do
-        let qt = QualifiedTable schema (cs table)
-        primaryKeys <- primaryKeyColumns qt
+        let qi = QualifiedIdentifier schema (cs table)
+        primaryKeys <- primaryKeyColumns qi
         let specifiedKeys = map (cs . fst) qq
         if S.fromList primaryKeys /= S.fromList specifiedKeys
           then return $ responseLBS status405 []
                "You must speficy all and only primary keys as params"
           else do
-            tableCols <- map (cs . colName) <$> columns qt
+            tableCols <- map (cs . colName) <$> columns qi
             let cols = map cs $ M.keys obj
             if S.fromList tableCols == S.fromList cols
               then do
                 let vals = M.elems obj
                 H.unitEx $ iffNotT
-                        (whereT qq $ update qt cols vals)
-                        (insertSelect qt cols vals)
+                        (whereT qq $ update qi cols vals)
+                        (insertSelect qi cols vals)
                 return $ responseLBS status204 [ jsonH ] ""
 
               else return $ if Prelude.null tableCols
@@ -188,10 +188,10 @@ app conf reqBody req =
 
     ([table], "PATCH") ->
       handleJsonObj reqBody $ \obj -> do
-        let qt = QualifiedTable schema (cs table)
+        let qi = QualifiedIdentifier schema (cs table)
             up = returningStarT
                . whereT qq
-               $ update qt (map cs $ M.keys obj) (M.elems obj)
+               $ update qi (map cs $ M.keys obj) (M.elems obj)
             patch = withT up "t" $ B.Stmt
               "select count(t), array_to_json(array_agg(row_to_json(t)))::character varying"
               V.empty True
@@ -207,11 +207,11 @@ app conf reqBody req =
         return $ responseLBS s [ jsonH, r ] $ if echoRequested then cs $ fromMaybe "[]" body else ""
 
     ([table], "DELETE") -> do
-      let qt = QualifiedTable schema (cs table)
+      let qi = QualifiedIdentifier schema (cs table)
       let del = countT
             . returningStarT
             . whereT qq
-            $ deleteFrom qt
+            $ deleteFrom qi
       row <- H.maybeEx del
       let (Identity deletedCount) = fromMaybe (Identity 0 :: Identity Int) row
       return $ if deletedCount == 0

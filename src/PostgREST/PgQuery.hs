@@ -33,9 +33,9 @@ instance Monoid PStmt where
   mempty = B.Stmt "" empty True
 type StatementT = PStmt -> PStmt
 
-data QualifiedTable = QualifiedTable {
-  qtSchema :: T.Text
-, qtName   :: T.Text
+data QualifiedIdentifier = QualifiedIdentifier {
+  qiSchema :: T.Text
+, qiName   :: T.Text
 } deriving (Show)
 
 data OrderTerm = OrderTerm {
@@ -96,8 +96,8 @@ countT :: StatementT
 countT s =
   s { B.stmtTemplate = "WITH qqq AS (" <> B.stmtTemplate s <> ") SELECT count(1) FROM qqq" }
 
-countRows :: QualifiedTable -> PStmt
-countRows t = B.Stmt ("select count(1) from " <> fromQt t) empty True
+countRows :: QualifiedIdentifier -> PStmt
+countRows t = B.Stmt ("select count(1) from " <> fromQi t) empty True
 
 asJsonWithCount :: StatementT
 asJsonWithCount s = s { B.stmtTemplate =
@@ -107,23 +107,23 @@ asJsonWithCount s = s { B.stmtTemplate =
 asJsonRow :: StatementT
 asJsonRow s = s { B.stmtTemplate = "row_to_json(t) from (" <> B.stmtTemplate s <> ") t" }
 
-selectStar :: QualifiedTable -> PStmt
-selectStar t = B.Stmt ("select * from " <> fromQt t) empty True
+selectStar :: QualifiedIdentifier -> PStmt
+selectStar t = B.Stmt ("select * from " <> fromQi t) empty True
 
 returningStarT :: StatementT
 returningStarT s = s { B.stmtTemplate = B.stmtTemplate s <> " RETURNING *" }
 
-deleteFrom :: QualifiedTable -> PStmt
-deleteFrom t = B.Stmt ("delete from " <> fromQt t) empty True
+deleteFrom :: QualifiedIdentifier -> PStmt
+deleteFrom t = B.Stmt ("delete from " <> fromQi t) empty True
 
-insertInto :: QualifiedTable
+insertInto :: QualifiedIdentifier
               -> V.Vector T.Text
               -> V.Vector (V.Vector JSON.Value)
               -> PStmt
 insertInto t cols vals
-  | V.null cols = B.Stmt ("insert into " <> fromQt t <> " default values returning *") empty True
+  | V.null cols = B.Stmt ("insert into " <> fromQi t <> " default values returning *") empty True
   | otherwise   = B.Stmt
-    ("insert into " <> fromQt t <> " (" <>
+    ("insert into " <> fromQi t <> " (" <>
       T.intercalate ", " (V.toList $ V.map pgFmtIdent cols) <>
       ") values "
       <> T.intercalate ", "
@@ -132,22 +132,22 @@ insertInto t cols vals
             <> ")"
           ) vals
         )
-      <> " returning row_to_json(" <> fromQt t <> ".*)")
+      <> " returning row_to_json(" <> fromQi t <> ".*)")
     empty True
 
-insertSelect :: QualifiedTable -> [T.Text] -> [JSON.Value] -> PStmt
+insertSelect :: QualifiedIdentifier -> [T.Text] -> [JSON.Value] -> PStmt
 insertSelect t [] _ = B.Stmt
-  ("insert into " <> fromQt t <> " default values returning *") empty True
+  ("insert into " <> fromQi t <> " default values returning *") empty True
 insertSelect t cols vals = B.Stmt
-  ("insert into " <> fromQt t <> " ("
+  ("insert into " <> fromQi t <> " ("
     <> T.intercalate ", " (map pgFmtIdent cols)
     <> ") select "
     <> T.intercalate ", " (map insertableValue vals))
   empty True
 
-update :: QualifiedTable -> [T.Text] -> [JSON.Value] -> PStmt
+update :: QualifiedIdentifier -> [T.Text] -> [JSON.Value] -> PStmt
 update t cols vals = B.Stmt
-  ("update " <> fromQt t <> " set ("
+  ("update " <> fromQi t <> " set ("
     <> T.intercalate ", " (map pgFmtIdent cols)
     <> ") = ("
     <> T.intercalate ", " (map insertableValue vals)
@@ -269,8 +269,8 @@ pgFmtLit x =
 trimNullChars :: T.Text -> T.Text
 trimNullChars = T.takeWhile (/= '\x0')
 
-fromQt :: QualifiedTable -> T.Text
-fromQt t = pgFmtIdent (qtSchema t) <> "." <> pgFmtIdent (qtName t)
+fromQi :: QualifiedIdentifier -> T.Text
+fromQi t = pgFmtIdent (qiSchema t) <> "." <> pgFmtIdent (qiName t)
 
 unquoted :: JSON.Value -> T.Text
 unquoted (JSON.String t) = t
